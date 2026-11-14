@@ -3,26 +3,167 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MotoDojezd – test hlasu</title>
+  <title>MotoDojezd</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #fff; color: #111; }
-    h1 { font-size: 24px; }
-    button { width: 100%; padding: 28px; font-size: 24px; margin: 12px 0; border: none; border-radius: 12px; background: #1F4E79; color: #fff; }
-    #stav { font-size: 18px; margin-top: 16px; line-height: 1.4; }
+    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #fff; color: #111; max-width: 600px; }
+    h1 { font-size: 26px; margin-top: 0; }
+    h2 { font-size: 20px; margin-top: 28px; border-bottom: 2px solid #1F4E79; padding-bottom: 4px; }
+    input { width: 100%; box-sizing: border-box; padding: 14px; font-size: 18px; margin: 6px 0; border: 2px solid #999; border-radius: 8px; }
+    button { width: 100%; padding: 18px; font-size: 20px; margin: 8px 0; border: none; border-radius: 12px; background: #1F4E79; color: #fff; }
+    button.sedy { background: #666; }
+    ul { list-style: none; padding: 0; margin: 8px 0; }
+    li { padding: 16px; font-size: 18px; border: 1px solid #ccc; border-radius: 8px; margin: 6px 0; background: #f6f9fc; }
+    #karta { background: #e8f0f8; border-radius: 12px; padding: 14px 16px; margin-top: 14px; font-size: 18px; line-height: 1.6; }
+    #karta b { color: #1F4E79; }
+    #chyba { color: #b00020; font-size: 16px; }
+    #stav { font-size: 18px; margin-top: 12px; line-height: 1.4; }
     small { color: #555; }
+    .skryte { display: none; }
   </style>
 </head>
 <body>
-  <h1>MotoDojezd – test hlasu</h1>
-  <p>Spáruj telefon s intercomem, zapni hlasitost a stiskni tlačítko.</p>
+  <h1>MotoDojezd</h1>
+  <small>Orientační pomůcka. Nenahrazuje hlídání paliva.</small>
 
+  <h2>1. Vyber motorku</h2>
+  <input id="hledat" type="search" placeholder="Hledej: výrobce nebo model" autocomplete="off">
+  <ul id="seznam"></ul>
+
+  <button id="tlacitkoVlastni" class="sedy">Moje motorka není v seznamu</button>
+
+  <div id="formular" class="skryte">
+    <input id="vNazev" type="text" placeholder="Název (např. Honda CB 500)">
+    <input id="vNadrz" type="text" inputmode="decimal" placeholder="Objem nádrže v litrech (např. 17,5)">
+    <input id="vRezerva" type="text" inputmode="decimal" placeholder="Rezerva v litrech (např. 2,5)">
+    <input id="vSpotreba" type="text" inputmode="decimal" placeholder="Spotřeba l/100 km (např. 5,5)">
+    <div id="chyba"></div>
+    <button id="tlacitkoPouzit">Použít tyto hodnoty</button>
+  </div>
+
+  <div id="karta" class="skryte"></div>
+
+  <h2>Test hlasu</h2>
   <button id="tlacitko">Test hlasu</button>
-
   <div id="stav">Čekám na stisk tlačítka.</div>
-  <p><small>Orientační pomůcka. Nenahrazuje hlídání paliva.</small></p>
 
+  <script src="motorky.js"></script>
   <script>
-    // Vybere český hlas, pokud ho telefon má
+    // ---------- Pomocné funkce ----------
+
+    // Odstraní diakritiku a velká písmena, aby šlo hledat "honda" i "Hóndá"
+    function normalizuj(text) {
+      return text.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+    }
+
+    // Převede "17,5" na číslo 17.5
+    function naCislo(text) {
+      return parseFloat(String(text).replace(",", ".").trim());
+    }
+
+    // Formát čísla s desetinnou čárkou
+    function cs(cislo) {
+      return String(Math.round(cislo * 10) / 10).replace(".", ",");
+    }
+
+    // ---------- Vybraná motorka ----------
+    var vybrana = null;
+
+    function ulozVyber() {
+      try { localStorage.setItem("vybranaMotorka", JSON.stringify(vybrana)); } catch (e) {}
+    }
+
+    function nactiVyber() {
+      try {
+        var data = localStorage.getItem("vybranaMotorka");
+        if (data) { vybrana = JSON.parse(data); }
+      } catch (e) { vybrana = null; }
+    }
+
+    function zobrazKartu() {
+      var karta = document.getElementById("karta");
+      if (!vybrana) { karta.className = "skryte"; return; }
+
+      var pouzitelne = vybrana.nadrz_l - vybrana.rezerva_l;
+      var dojezdBezRezervy = pouzitelne / vybrana.spotreba_l100km * 100;
+      var dojezdCelkem = vybrana.nadrz_l / vybrana.spotreba_l100km * 100;
+
+      var nazev = vybrana.vyrobce ? vybrana.vyrobce + " " + vybrana.model : vybrana.model;
+      if (vybrana.rok) { nazev += " (" + vybrana.rok + ")"; }
+
+      karta.className = "";
+      karta.innerHTML =
+        "<b>Vybráno: " + nazev + "</b><br>" +
+        "Nádrž: " + cs(vybrana.nadrz_l) + " l<br>" +
+        "Rezerva: " + cs(vybrana.rezerva_l) + " l<br>" +
+        "Spotřeba: " + cs(vybrana.spotreba_l100km) + " l/100 km<br>" +
+        "Dojezd z plné nádrže do rezervy: <b>" + Math.round(dojezdBezRezervy) + " km</b><br>" +
+        "Dojezd celkem včetně rezervy: <b>" + Math.round(dojezdCelkem) + " km</b>";
+    }
+
+    function vyber(motorka) {
+      vybrana = motorka;
+      ulozVyber();
+      zobrazKartu();
+      document.getElementById("karta").scrollIntoView({ behavior: "smooth" });
+    }
+
+    // ---------- Vyhledávání v seznamu ----------
+    function vykresliSeznam() {
+      var dotaz = normalizuj(document.getElementById("hledat").value);
+      var seznam = document.getElementById("seznam");
+      seznam.innerHTML = "";
+
+      var nalezeno = 0;
+      MOTORKY.forEach(function (m) {
+        var text = normalizuj(m.vyrobce + " " + m.model + " " + m.rok);
+        if (text.indexOf(dotaz) === -1) { return; }
+        nalezeno++;
+
+        var li = document.createElement("li");
+        li.textContent = m.vyrobce + " " + m.model + " (" + m.rok + ")";
+        li.addEventListener("click", function () { vyber(m); });
+        seznam.appendChild(li);
+      });
+
+      if (nalezeno === 0) {
+        var prazdne = document.createElement("li");
+        prazdne.textContent = "Nic nenalezeno. Použij tlačítko „Moje motorka není v seznamu“.";
+        seznam.appendChild(prazdne);
+      }
+    }
+
+    document.getElementById("hledat").addEventListener("input", vykresliSeznam);
+
+    // ---------- Ruční zadání ----------
+    document.getElementById("tlacitkoVlastni").addEventListener("click", function () {
+      document.getElementById("formular").classList.toggle("skryte");
+    });
+
+    document.getElementById("tlacitkoPouzit").addEventListener("click", function () {
+      var nadrz = naCislo(document.getElementById("vNadrz").value);
+      var rezerva = naCislo(document.getElementById("vRezerva").value);
+      var spotreba = naCislo(document.getElementById("vSpotreba").value);
+      var nazev = document.getElementById("vNazev").value.trim() || "Moje motorka";
+      var chyba = document.getElementById("chyba");
+
+      if (isNaN(nadrz) || isNaN(rezerva) || isNaN(spotreba)) {
+        chyba.textContent = "Vyplň všechna tři čísla.";
+        return;
+      }
+      if (nadrz <= 0 || spotreba <= 0 || rezerva < 0) {
+        chyba.textContent = "Čísla musí být kladná.";
+        return;
+      }
+      if (rezerva >= nadrz) {
+        chyba.textContent = "Rezerva musí být menší než celá nádrž.";
+        return;
+      }
+      chyba.textContent = "";
+
+      vyber({ vyrobce: "", model: nazev, rok: "", nadrz_l: nadrz, rezerva_l: rezerva, spotreba_l100km: spotreba, zdroj: "zadáno ručně" });
+    });
+
+    // ---------- Test hlasu (z minulého kroku) ----------
     function najdiCeskyHlas() {
       var hlasy = window.speechSynthesis.getVoices();
       for (var i = 0; i < hlasy.length; i++) {
@@ -61,8 +202,14 @@
       rekni("Pozor, zbývá přibližně šedesát kilometrů.");
     });
 
-    // Některé telefony načítají seznam hlasů se zpožděním
-    window.speechSynthesis.onvoiceschanged = function () {};
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.onvoiceschanged = function () {};
+    }
+
+    // ---------- Start aplikace ----------
+    nactiVyber();
+    vykresliSeznam();
+    zobrazKartu();
   </script>
 </body>
 </html>
