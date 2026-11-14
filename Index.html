@@ -1,1 +1,68 @@
-Ahoj
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MotoDojezd – test hlasu</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #fff; color: #111; }
+    h1 { font-size: 24px; }
+    button { width: 100%; padding: 28px; font-size: 24px; margin: 12px 0; border: none; border-radius: 12px; background: #1F4E79; color: #fff; }
+    #stav { font-size: 18px; margin-top: 16px; line-height: 1.4; }
+    small { color: #555; }
+  </style>
+</head>
+<body>
+  <h1>MotoDojezd – test hlasu</h1>
+  <p>Spáruj telefon s intercomem, zapni hlasitost a stiskni tlačítko.</p>
+
+  <button id="tlacitko">Test hlasu</button>
+
+  <div id="stav">Čekám na stisk tlačítka.</div>
+  <p><small>Orientační pomůcka. Nenahrazuje hlídání paliva.</small></p>
+
+  <script>
+    // Vybere český hlas, pokud ho telefon má
+    function najdiCeskyHlas() {
+      var hlasy = window.speechSynthesis.getVoices();
+      for (var i = 0; i < hlasy.length; i++) {
+        if (hlasy[i].lang && hlasy[i].lang.toLowerCase().indexOf("cs") === 0) {
+          return hlasy[i];
+        }
+      }
+      return null;
+    }
+
+    function rekni(text) {
+      var stav = document.getElementById("stav");
+
+      if (!("speechSynthesis" in window)) {
+        stav.textContent = "Tento prohlížeč neumí hlasový výstup.";
+        return;
+      }
+
+      var veta = new SpeechSynthesisUtterance(text);
+      veta.lang = "cs-CZ";
+      veta.rate = 0.9;
+
+      var hlas = najdiCeskyHlas();
+      if (hlas) {
+        veta.voice = hlas;
+        stav.textContent = "Mluvím. Použitý hlas: " + hlas.name;
+      } else {
+        stav.textContent = "Mluvím, ale český hlas jsem nenašla. Zkontroluj v nastavení Androidu Převod textu na řeč a doinstaluj češtinu.";
+      }
+
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(veta);
+    }
+
+    document.getElementById("tlacitko").addEventListener("click", function () {
+      rekni("Pozor, zbývá přibližně šedesát kilometrů.");
+    });
+
+    // Některé telefony načítají seznam hlasů se zpožděním
+    window.speechSynthesis.onvoiceschanged = function () {};
+  </script>
+</body>
+</html>
