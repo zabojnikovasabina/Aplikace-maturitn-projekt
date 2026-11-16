@@ -12,6 +12,7 @@
     button { width: 100%; padding: 18px; font-size: 20px; margin: 8px 0; border: none; border-radius: 12px; background: #1F4E79; color: #fff; }
     button.sedy { background: #666; }
     button.zelene { background: #2e7d32; }
+    button.cervene { background: #b00020; }
     ul { list-style: none; padding: 0; margin: 8px 0; }
     li { padding: 16px; font-size: 18px; border: 1px solid #ccc; border-radius: 8px; margin: 6px 0; background: #f6f9fc; }
     .karta { background: #e8f0f8; border-radius: 12px; padding: 14px 16px; margin-top: 14px; font-size: 18px; line-height: 1.6; }
@@ -67,6 +68,17 @@
     <p class="popisek">Ujeto od natankování (km). Zatím se zadává ručně, v modulu 3 to převezme GPS.</p>
     <input id="tUjeto" type="text" inputmode="decimal" placeholder="Ujeto km">
     <div id="kartaStav" class="karta"></div>
+  </div>
+
+  <!-- ============ MODUL 3: GPS a ujetá vzdálenost ============ -->
+  <div id="sekceJizda" class="skryte">
+    <h2>3. Jízda (GPS)</h2>
+    <p class="popisek">Stiskni Start před jízdou. Displej musí zůstat zapnutý a aplikace na popředí. Když zmáčkneš Stop a pak znovu Start, kilometry v pauze se nepočítají.</p>
+    <button id="tlacitkoStart" class="zelene">Start</button>
+    <button id="tlacitkoStop" class="cervene skryte">Stop</button>
+    <button id="tlacitkoSimulace" class="sedy">Simulovat jízdu (test doma)</button>
+    <div id="chybaJizda" class="chyba"></div>
+    <div id="kartaGps" class="karta">GPS zatím neběží.</div>
   </div>
 
   <!-- ============ Test hlasu ============ -->
@@ -149,6 +161,7 @@
     function vyber(motorka) {
       // Při změně motorky se stav nádrže vynuluje (patří k jiné motorce)
       if (klicMotorky(motorka) !== klicMotorky(vybrana)) {
+        zastavSledovani(false);
         stav = null;
         smaz("stavNadrze");
         id("kalibrace").className = "karta skryte";
@@ -265,10 +278,12 @@
     function zobrazTankovani() {
       if (!vybrana) {
         id("sekceTankovani").className = "skryte";
+        id("sekceJizda").className = "skryte";
         id("bezMotorky").className = "popisek";
         return;
       }
       id("sekceTankovani").className = "";
+      id("sekceJizda").className = "";
       id("bezMotorky").className = "popisek skryte";
       zobrazStav();
     }
@@ -373,6 +388,273 @@
     });
 
     // =====================================================
+    // MODUL 3: GPS a ujetá vzdálenost
+    // =====================================================
+
+    // Nastavení filtru (hodnoty se dají měnit podle zkušebních jízd)
+    var MAX_PRESNOST_M = 30;    // body s horší přesností zahodíme
+    var MIN_POSUN_M = 8;        // menší posun bereme jako šum při stání
+    var MAX_RYCHLOST_MS = 70;   // rychlejší "skok" (252 km/h) je chyba GPS
+
+    var sledovani = null;       // číslo sledování z watchPosition (null = neběží)
+    var simulace = null;        // číslo časovače simulace (null = neběží)
+    var wakeLock = null;        // zámek displeje
+    var posledniBod = null;     // poslední započítaný bod
+    var bodyPrijate = 0;
+    var bodyZahozene = 0;
+    var odmitnutiPodSebou = 0;
+    var bylNaPozadi = false;
+    var gpsText = "";
+    var posledniPresnost = null;
+    var posledniRychlost = null;
+
+    // Vzdálenost mezi dvěma body na Zemi v metrech (vzorec Haversine)
+    function haversineM(lat1, lon1, lat2, lon2) {
+      var R = 6371000;
+      var rad = Math.PI / 180;
+      var dLat = (lat2 - lat1) * rad;
+      var dLon = (lon2 - lon1) * rad;
+      var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(lat1 * rad) * Math.cos(lat2 * rad) *
+              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    function bezi() {
+      return sledovani !== null || simulace !== null;
+    }
+
+    function resetStatistik() {
+      posledniBod = null;
+      bodyPrijate = 0;
+      bodyZahozene = 0;
+      odmitnutiPodSebou = 0;
+      bylNaPozadi = false;
+      posledniPresnost = null;
+      posledniRychlost = null;
+    }
+
+    // Přepíše políčko "Ujeto km" podle GPS (pokud do něj zrovna nepíšeš)
+    function aktualizujUjeto() {
+      if (document.activeElement !== id("tUjeto")) {
+        id("tUjeto").value = cs(stav.ujetoKm);
+      }
+    }
+
+    function zobrazGps() {
+      var karta = id("kartaGps");
+      if (!bezi() && gpsText === "") {
+        karta.innerHTML = "GPS zatím neběží.";
+        return;
+      }
+
+      var html = "GPS: <b>" + gpsText + "</b>";
+      if (posledniPresnost !== null) {
+        html += "<br>Přesnost: ± " + Math.round(posledniPresnost) + " m";
+      }
+      if (posledniRychlost !== null) {
+        html += "<br>Rychlost: " + Math.round(posledniRychlost) + " km/h";
+      }
+      html += "<br>Body: přijaté " + bodyPrijate + ", zahozené " + bodyZahozene;
+      if (bezi()) {
+        html += "<br>Displej: " + (wakeLock ? "drží se zapnutý" : "nelze zamknout, nevypínej ho ručně");
+      }
+      if (bylNaPozadi) {
+        html += "<br><span class='varovani'>Aplikace byla na pozadí, část kilometrů mohla chybět.</span>";
+      }
+      karta.innerHTML = html;
+    }
+
+    // Zpracuje jeden bod z GPS: filtr a přičtení vzdálenosti
+    function zpracujBod(bod) {
+      if (!stav) { return; }
+      posledniPresnost = bod.presnost;
+
+      // 1) Nepřesný bod zahodíme
+      if (bod.presnost > MAX_PRESNOST_M) {
+        bodyZahozene++;
+        zobrazGps();
+        return;
+      }
+
+      // 2) První dobrý bod je jen výchozí
+      if (!posledniBod) {
+        posledniBod = bod;
+        bodyPrijate++;
+        zobrazGps();
+        return;
+      }
+
+      var d = haversineM(posledniBod.lat, posledniBod.lon, bod.lat, bod.lon);
+      var dt = (bod.cas - posledniBod.cas) / 1000;
+
+      // 3) Malý posun = šum při stání (výchozí bod neměníme, posun se může nasbírat)
+      var prah = Math.max(MIN_POSUN_M, bod.presnost);
+      if (d < prah) {
+        bodyZahozene++;
+        zobrazGps();
+        return;
+      }
+
+      // 4) Nemožně rychlý skok = chyba GPS
+      if (dt > 0 && d / dt > MAX_RYCHLOST_MS) {
+        bodyZahozene++;
+        odmitnutiPodSebou++;
+        if (odmitnutiPodSebou >= 5) {   // pět skoků po sobě: bereme nový bod jako výchozí
+          posledniBod = bod;
+          odmitnutiPodSebou = 0;
+        }
+        zobrazGps();
+        return;
+      }
+
+      // 5) Bod je v pořádku, přičteme kilometry
+      odmitnutiPodSebou = 0;
+      stav.ujetoKm += d / 1000;
+      posledniBod = bod;
+      bodyPrijate++;
+      if (bod.rychlost !== null && bod.rychlost !== undefined) {
+        posledniRychlost = bod.rychlost * 3.6;
+      } else if (dt > 0) {
+        posledniRychlost = d / dt * 3.6;
+      }
+
+      ulozStav();
+      aktualizujUjeto();
+      zobrazStav();
+      zobrazGps();
+    }
+
+    // ---------- Zámek displeje (Wake Lock) ----------
+    function zamkniDisplej() {
+      try {
+        if ("wakeLock" in navigator) {
+          navigator.wakeLock.request("screen").then(function (zamek) {
+            wakeLock = zamek;
+            zobrazGps();
+          }).catch(function () {
+            wakeLock = null;
+            zobrazGps();
+          });
+        }
+      } catch (e) { wakeLock = null; }
+    }
+
+    function uvolniDisplej() {
+      try { if (wakeLock) { wakeLock.release(); } } catch (e) {}
+      wakeLock = null;
+    }
+
+    // Když se aplikace schová, telefon zámek displeje zruší. Po návratu ho zapneme znovu.
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "hidden" && bezi()) {
+        bylNaPozadi = true;
+      }
+      if (document.visibilityState === "visible" && sledovani !== null) {
+        zamkniDisplej();
+        zobrazGps();
+      }
+    });
+
+    // ---------- Tlačítka ----------
+    function prepniTlacitka() {
+      var bezici = bezi();
+      id("tlacitkoStart").className = bezici ? "zelene skryte" : "zelene";
+      id("tlacitkoSimulace").className = bezici ? "sedy skryte" : "sedy";
+      id("tlacitkoStop").className = bezici ? "cervene" : "cervene skryte";
+    }
+
+    function muzuSpustit() {
+      var chyba = id("chybaJizda");
+      chyba.textContent = "";
+      if (!vybrana || !stav) {
+        chyba.textContent = "Nejdřív vyber motorku a zadej natankování (část 2).";
+        return false;
+      }
+      return !bezi();
+    }
+
+    function spustSledovani() {
+      if (!muzuSpustit()) { return; }
+
+      if (!("geolocation" in navigator)) {
+        id("chybaJizda").textContent = "Tento prohlížeč neumí GPS.";
+        return;
+      }
+
+      resetStatistik();
+      gpsText = "čekám na signál…";
+
+      sledovani = navigator.geolocation.watchPosition(
+        function (poloha) {
+          gpsText = "sleduji polohu";
+          zpracujBod({
+            lat: poloha.coords.latitude,
+            lon: poloha.coords.longitude,
+            presnost: poloha.coords.accuracy,
+            rychlost: poloha.coords.speed,
+            cas: poloha.timestamp
+          });
+        },
+        function (chyba) {
+          if (chyba.code === 1) {
+            gpsText = "poloha je zakázána";
+            id("chybaJizda").textContent = "Přístup k poloze je odepřen. V Chrome klepni na zámek vedle adresy, Oprávnění, a povol polohu.";
+            zastavSledovani(true);
+            return;
+          }
+          gpsText = (chyba.code === 2) ? "poloha není dostupná (slabý signál)" : "vypršel čas čekání na GPS, zkouším dál";
+          zobrazGps();
+        },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
+      );
+
+      zamkniDisplej();
+      prepniTlacitka();
+      zobrazGps();
+    }
+
+    // Simulace jízdy: každou sekundu posune bod o cca 20 m (72 km/h)
+    function spustSimulaci() {
+      if (!muzuSpustit()) { return; }
+
+      resetStatistik();
+      gpsText = "SIMULACE 72 km/h";
+      var lat = 50.0;
+      var lon = 14.4;
+
+      simulace = setInterval(function () {
+        lat += 0.00018;
+        zpracujBod({ lat: lat, lon: lon, presnost: 5, rychlost: 20, cas: Date.now() });
+      }, 1000);
+
+      prepniTlacitka();
+      zobrazGps();
+    }
+
+    // zachovatChybu = true nesmaže chybovou hlášku (po odepření polohy)
+    function zastavSledovani(zachovatChybu) {
+      if (sledovani !== null) {
+        navigator.geolocation.clearWatch(sledovani);
+        sledovani = null;
+      }
+      if (simulace !== null) {
+        clearInterval(simulace);
+        simulace = null;
+      }
+      uvolniDisplej();
+      posledniBod = null;
+      if (!zachovatChybu) { gpsText = "zastaveno"; }
+      prepniTlacitka();
+      zobrazGps();
+      if (stav) { ulozStav(); }
+    }
+
+    id("tlacitkoStart").addEventListener("click", spustSledovani);
+    id("tlacitkoSimulace").addEventListener("click", spustSimulaci);
+    id("tlacitkoStop").addEventListener("click", function () { zastavSledovani(false); });
+
+    // =====================================================
     // Test hlasu
     // =====================================================
     function najdiCeskyHlas() {
@@ -425,7 +707,7 @@
     var ulozeny = nacti("stavNadrze");
     if (vybrana && ulozeny && ulozeny.klic === klicMotorky(vybrana)) {
       stav = ulozeny.stav;
-      id("tUjeto").value = stav ? String(stav.ujetoKm).replace(".", ",") : "";
+      id("tUjeto").value = stav ? cs(stav.ujetoKm) : "";
     }
 
     vykresliSeznam();
