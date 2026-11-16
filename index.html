@@ -11,11 +11,14 @@
     input { width: 100%; box-sizing: border-box; padding: 14px; font-size: 18px; margin: 6px 0; border: 2px solid #999; border-radius: 8px; }
     button { width: 100%; padding: 18px; font-size: 20px; margin: 8px 0; border: none; border-radius: 12px; background: #1F4E79; color: #fff; }
     button.sedy { background: #666; }
+    button.zelene { background: #2e7d32; }
     ul { list-style: none; padding: 0; margin: 8px 0; }
     li { padding: 16px; font-size: 18px; border: 1px solid #ccc; border-radius: 8px; margin: 6px 0; background: #f6f9fc; }
-    #karta { background: #e8f0f8; border-radius: 12px; padding: 14px 16px; margin-top: 14px; font-size: 18px; line-height: 1.6; }
-    #karta b { color: #1F4E79; }
-    #chyba { color: #b00020; font-size: 16px; }
+    .karta { background: #e8f0f8; border-radius: 12px; padding: 14px 16px; margin-top: 14px; font-size: 18px; line-height: 1.6; }
+    .karta b { color: #1F4E79; }
+    .varovani { color: #b00020; font-weight: bold; }
+    .chyba { color: #b00020; font-size: 16px; }
+    .popisek { font-size: 15px; color: #444; margin: 12px 0 0 0; }
     #stav { font-size: 18px; margin-top: 12px; line-height: 1.4; }
     small { color: #555; }
     .skryte { display: none; }
@@ -25,6 +28,7 @@
   <h1>MotoDojezd</h1>
   <small>Orientační pomůcka. Nenahrazuje hlídání paliva.</small>
 
+  <!-- ============ MODUL 1: výběr motorky ============ -->
   <h2>1. Vyber motorku</h2>
   <input id="hledat" type="search" placeholder="Hledej: výrobce nebo model" autocomplete="off">
   <ul id="seznam"></ul>
@@ -36,12 +40,36 @@
     <input id="vNadrz" type="text" inputmode="decimal" placeholder="Objem nádrže v litrech (např. 17,5)">
     <input id="vRezerva" type="text" inputmode="decimal" placeholder="Rezerva v litrech (např. 2,5)">
     <input id="vSpotreba" type="text" inputmode="decimal" placeholder="Spotřeba l/100 km (např. 5,5)">
-    <div id="chyba"></div>
+    <div id="chyba" class="chyba"></div>
     <button id="tlacitkoPouzit">Použít tyto hodnoty</button>
   </div>
 
-  <div id="karta" class="skryte"></div>
+  <div id="karta" class="karta skryte"></div>
 
+  <!-- ============ MODUL 2: tankování a stav nádrže ============ -->
+  <h2>2. Tankování</h2>
+  <div id="bezMotorky" class="popisek">Nejdřív vyber motorku výše.</div>
+
+  <div id="sekceTankovani" class="skryte">
+    <p class="popisek">Natankováno do plna (doporučeno). Litry jsou nepovinné, ale po dalším tankování z nich aplikace spočítá skutečnou spotřebu.</p>
+    <input id="tLitry" type="text" inputmode="decimal" placeholder="Natankováno litrů (nepovinné)">
+    <button id="tlacitkoPlna" class="zelene">Natankováno do plna</button>
+
+    <div id="kalibrace" class="karta skryte"></div>
+
+    <p class="popisek">Nenatankováno do plna? Zadej odhad, kolik litrů je teď v nádrži.</p>
+    <input id="tOdhad" type="text" inputmode="decimal" placeholder="Litrů v nádrži teď (odhad)">
+    <button id="tlacitkoCast" class="sedy">Nastavit stav nádrže ručně</button>
+
+    <div id="chybaTankovani" class="chyba"></div>
+
+    <h2>Stav nádrže</h2>
+    <p class="popisek">Ujeto od natankování (km). Zatím se zadává ručně, v modulu 3 to převezme GPS.</p>
+    <input id="tUjeto" type="text" inputmode="decimal" placeholder="Ujeto km">
+    <div id="kartaStav" class="karta"></div>
+  </div>
+
+  <!-- ============ Test hlasu ============ -->
   <h2>Test hlasu</h2>
   <button id="tlacitko">Test hlasu</button>
   <div id="stav">Čekám na stisk tlačítka.</div>
@@ -60,28 +88,44 @@
       return parseFloat(String(text).replace(",", ".").trim());
     }
 
-    // Formát čísla s desetinnou čárkou
+    // Formát čísla s desetinnou čárkou, zaokrouhleno na 0,1
     function cs(cislo) {
       return String(Math.round(cislo * 10) / 10).replace(".", ",");
     }
 
-    // ---------- Vybraná motorka ----------
-    var vybrana = null;
+    function id(nazev) { return document.getElementById(nazev); }
 
-    function ulozVyber() {
-      try { localStorage.setItem("vybranaMotorka", JSON.stringify(vybrana)); } catch (e) {}
+    // ---------- Ukládání do telefonu (localStorage) ----------
+    function uloz(klic, hodnota) {
+      try { localStorage.setItem(klic, JSON.stringify(hodnota)); } catch (e) {}
     }
 
-    function nactiVyber() {
+    function nacti(klic) {
       try {
-        var data = localStorage.getItem("vybranaMotorka");
-        if (data) { vybrana = JSON.parse(data); }
-      } catch (e) { vybrana = null; }
+        var data = localStorage.getItem(klic);
+        return data ? JSON.parse(data) : null;
+      } catch (e) { return null; }
     }
+
+    function smaz(klic) {
+      try { localStorage.removeItem(klic); } catch (e) {}
+    }
+
+    // ---------- Stav aplikace ----------
+    var vybrana = null;   // vybraná motorka
+    var stav = null;      // stav nádrže: { litry, ujetoKm, doPlna, cas }
+
+    function klicMotorky(m) {
+      return m ? (m.vyrobce + "|" + m.model + "|" + m.rok) : "";
+    }
+
+    // =====================================================
+    // MODUL 1: výběr motorky
+    // =====================================================
 
     function zobrazKartu() {
-      var karta = document.getElementById("karta");
-      if (!vybrana) { karta.className = "skryte"; return; }
+      var karta = id("karta");
+      if (!vybrana) { karta.className = "karta skryte"; return; }
 
       var pouzitelne = vybrana.nadrz_l - vybrana.rezerva_l;
       var dojezdBezRezervy = pouzitelne / vybrana.spotreba_l100km * 100;
@@ -90,27 +134,36 @@
       var nazev = vybrana.vyrobce ? vybrana.vyrobce + " " + vybrana.model : vybrana.model;
       if (vybrana.rok) { nazev += " (" + vybrana.rok + ")"; }
 
-      karta.className = "";
+      var poznamka = vybrana.kalibrovano ? " (změřeno)" : "";
+
+      karta.className = "karta";
       karta.innerHTML =
         "<b>Vybráno: " + nazev + "</b><br>" +
         "Nádrž: " + cs(vybrana.nadrz_l) + " l<br>" +
         "Rezerva: " + cs(vybrana.rezerva_l) + " l<br>" +
-        "Spotřeba: " + cs(vybrana.spotreba_l100km) + " l/100 km<br>" +
+        "Spotřeba: " + cs(vybrana.spotreba_l100km) + " l/100 km" + poznamka + "<br>" +
         "Dojezd z plné nádrže do rezervy: <b>" + Math.round(dojezdBezRezervy) + " km</b><br>" +
         "Dojezd celkem včetně rezervy: <b>" + Math.round(dojezdCelkem) + " km</b>";
     }
 
     function vyber(motorka) {
+      // Při změně motorky se stav nádrže vynuluje (patří k jiné motorce)
+      if (klicMotorky(motorka) !== klicMotorky(vybrana)) {
+        stav = null;
+        smaz("stavNadrze");
+        id("kalibrace").className = "karta skryte";
+        id("tUjeto").value = "";
+      }
       vybrana = motorka;
-      ulozVyber();
+      uloz("vybranaMotorka", vybrana);
       zobrazKartu();
-      document.getElementById("karta").scrollIntoView({ behavior: "smooth" });
+      zobrazTankovani();
+      id("karta").scrollIntoView({ behavior: "smooth" });
     }
 
-    // ---------- Vyhledávání v seznamu ----------
     function vykresliSeznam() {
-      var dotaz = normalizuj(document.getElementById("hledat").value);
-      var seznam = document.getElementById("seznam");
+      var dotaz = normalizuj(id("hledat").value);
+      var seznam = id("seznam");
       seznam.innerHTML = "";
 
       var nalezeno = 0;
@@ -132,19 +185,18 @@
       }
     }
 
-    document.getElementById("hledat").addEventListener("input", vykresliSeznam);
+    id("hledat").addEventListener("input", vykresliSeznam);
 
-    // ---------- Ruční zadání ----------
-    document.getElementById("tlacitkoVlastni").addEventListener("click", function () {
-      document.getElementById("formular").classList.toggle("skryte");
+    id("tlacitkoVlastni").addEventListener("click", function () {
+      id("formular").classList.toggle("skryte");
     });
 
-    document.getElementById("tlacitkoPouzit").addEventListener("click", function () {
-      var nadrz = naCislo(document.getElementById("vNadrz").value);
-      var rezerva = naCislo(document.getElementById("vRezerva").value);
-      var spotreba = naCislo(document.getElementById("vSpotreba").value);
-      var nazev = document.getElementById("vNazev").value.trim() || "Moje motorka";
-      var chyba = document.getElementById("chyba");
+    id("tlacitkoPouzit").addEventListener("click", function () {
+      var nadrz = naCislo(id("vNadrz").value);
+      var rezerva = naCislo(id("vRezerva").value);
+      var spotreba = naCislo(id("vSpotreba").value);
+      var nazev = id("vNazev").value.trim() || "Moje motorka";
+      var chyba = id("chyba");
 
       if (isNaN(nadrz) || isNaN(rezerva) || isNaN(spotreba)) {
         chyba.textContent = "Vyplň všechna tři čísla.";
@@ -163,7 +215,166 @@
       vyber({ vyrobce: "", model: nazev, rok: "", nadrz_l: nadrz, rezerva_l: rezerva, spotreba_l100km: spotreba, zdroj: "zadáno ručně" });
     });
 
-    // ---------- Test hlasu (z minulého kroku) ----------
+    // =====================================================
+    // MODUL 2: tankování a stav nádrže
+    // =====================================================
+
+    // Spočítá, kolik paliva zbývá a jaký je dojezd
+    function spocitejStav() {
+      var spotreba = vybrana.spotreba_l100km;
+      var spotrebovano = stav.ujetoKm * spotreba / 100;
+      var zbyva = Math.max(0, stav.litry - spotrebovano);
+
+      return {
+        zbyva: zbyva,
+        dojezdCelkem: zbyva / spotreba * 100,
+        dojezdDoRezervy: Math.max(0, (zbyva - vybrana.rezerva_l) / spotreba * 100),
+        vRezerve: zbyva <= vybrana.rezerva_l
+      };
+    }
+
+    function ulozStav() {
+      uloz("stavNadrze", { klic: klicMotorky(vybrana), stav: stav });
+    }
+
+    function zobrazStav() {
+      var karta = id("kartaStav");
+
+      if (!stav) {
+        karta.innerHTML = "Zatím není zadáno natankování. Stiskni „Natankováno do plna“.";
+        return;
+      }
+
+      var v = spocitejStav();
+      var html =
+        "V nádrži odhadem: <b>" + cs(v.zbyva) + " l</b><br>" +
+        "Ujeto od natankování: <b>" + cs(stav.ujetoKm) + " km</b><br>" +
+        "Dojezd do rezervy: <b>" + Math.round(v.dojezdDoRezervy) + " km</b><br>" +
+        "Dojezd celkem: <b>" + Math.round(v.dojezdCelkem) + " km</b>";
+
+      if (v.vRezerve) {
+        html += "<br><span class='varovani'>Jsi v rezervě. Zastav a natankuj.</span>";
+      }
+      if (!stav.doPlna) {
+        html += "<br><small>Stav byl zadán ručně, výpočet je jen tak přesný jako tvůj odhad.</small>";
+      }
+      karta.innerHTML = html;
+    }
+
+    // Zobrazí nebo skryje celou sekci podle toho, jestli je vybraná motorka
+    function zobrazTankovani() {
+      if (!vybrana) {
+        id("sekceTankovani").className = "skryte";
+        id("bezMotorky").className = "popisek";
+        return;
+      }
+      id("sekceTankovani").className = "";
+      id("bezMotorky").className = "popisek skryte";
+      zobrazStav();
+    }
+
+    // Tlačítko "Natankováno do plna"
+    id("tlacitkoPlna").addEventListener("click", function () {
+      var chyba = id("chybaTankovani");
+      chyba.textContent = "";
+      id("kalibrace").className = "karta skryte";
+
+      if (!vybrana) { chyba.textContent = "Nejdřív vyber motorku."; return; }
+
+      // Nepovinné litry pro kalibraci
+      var litryText = id("tLitry").value.trim();
+      var litry = null;
+      if (litryText !== "") {
+        litry = naCislo(litryText);
+        if (isNaN(litry) || litry <= 0) {
+          chyba.textContent = "Litry musí být kladné číslo.";
+          return;
+        }
+        if (litry > vybrana.nadrz_l * 1.05) {
+          chyba.textContent = "Natankováno víc, než se vejde do nádrže (" + cs(vybrana.nadrz_l) + " l). Zkontroluj číslo.";
+          return;
+        }
+      }
+
+      // Kalibrace: předchozí tankování bylo do plna a od té doby se ujelo aspoň 30 km
+      if (litry !== null && stav && stav.doPlna && stav.ujetoKm >= 30) {
+        var namereno = litry / stav.ujetoKm * 100;
+        if (namereno >= 1 && namereno <= 20) {
+          navrhniKalibraci(namereno, stav.ujetoKm);
+        } else {
+          chyba.textContent = "Z těchto čísel vychází nepravděpodobná spotřeba (" + cs(namereno) + " l/100 km), kalibraci přeskakuji.";
+        }
+      }
+
+      // Nová plná nádrž
+      stav = { litry: vybrana.nadrz_l, ujetoKm: 0, doPlna: true, cas: new Date().toISOString() };
+      ulozStav();
+      id("tUjeto").value = "0";
+      id("tLitry").value = "";
+      id("tOdhad").value = "";
+      zobrazStav();
+    });
+
+    // Zobrazí návrh nové spotřeby a dvě tlačítka
+    function navrhniKalibraci(namereno, ujeto) {
+      var box = id("kalibrace");
+      box.className = "karta";
+      box.innerHTML =
+        "<b>Naměřená spotřeba: " + cs(namereno) + " l/100 km</b><br>" +
+        "(z " + cs(ujeto) + " ujetých km). Nyní používáš " + cs(vybrana.spotreba_l100km) + " l/100 km.<br>" +
+        "<button id='kalPouzit' class='zelene'>Použít naměřenou hodnotu</button>" +
+        "<button id='kalPonechat' class='sedy'>Ponechat původní</button>";
+
+      id("kalPouzit").addEventListener("click", function () {
+        vybrana.spotreba_l100km = Math.round(namereno * 10) / 10;
+        vybrana.kalibrovano = true;
+        uloz("vybranaMotorka", vybrana);
+        box.className = "karta skryte";
+        zobrazKartu();
+        zobrazStav();
+      });
+      id("kalPonechat").addEventListener("click", function () {
+        box.className = "karta skryte";
+      });
+    }
+
+    // Tlačítko "Nastavit stav nádrže ručně"
+    id("tlacitkoCast").addEventListener("click", function () {
+      var chyba = id("chybaTankovani");
+      chyba.textContent = "";
+      id("kalibrace").className = "karta skryte";
+
+      if (!vybrana) { chyba.textContent = "Nejdřív vyber motorku."; return; }
+
+      var odhad = naCislo(id("tOdhad").value);
+      if (isNaN(odhad) || odhad < 0) {
+        chyba.textContent = "Zadej počet litrů v nádrži (0 nebo víc).";
+        return;
+      }
+      if (odhad > vybrana.nadrz_l) {
+        chyba.textContent = "V nádrži nemůže být víc než " + cs(vybrana.nadrz_l) + " l.";
+        return;
+      }
+
+      stav = { litry: odhad, ujetoKm: 0, doPlna: false, cas: new Date().toISOString() };
+      ulozStav();
+      id("tUjeto").value = "0";
+      id("tLitry").value = "";
+      zobrazStav();
+    });
+
+    // Ruční zadání ujetých km (dočasné, v modulu 3 doplní GPS)
+    id("tUjeto").addEventListener("input", function () {
+      if (!stav) { return; }
+      var km = naCislo(id("tUjeto").value);
+      stav.ujetoKm = (isNaN(km) || km < 0) ? 0 : km;
+      ulozStav();
+      zobrazStav();
+    });
+
+    // =====================================================
+    // Test hlasu
+    // =====================================================
     function najdiCeskyHlas() {
       var hlasy = window.speechSynthesis.getVoices();
       for (var i = 0; i < hlasy.length; i++) {
@@ -175,10 +386,10 @@
     }
 
     function rekni(text) {
-      var stav = document.getElementById("stav");
+      var stavHlasu = id("stav");
 
       if (!("speechSynthesis" in window)) {
-        stav.textContent = "Tento prohlížeč neumí hlasový výstup.";
+        stavHlasu.textContent = "Tento prohlížeč neumí hlasový výstup.";
         return;
       }
 
@@ -189,16 +400,16 @@
       var hlas = najdiCeskyHlas();
       if (hlas) {
         veta.voice = hlas;
-        stav.textContent = "Mluvím. Použitý hlas: " + hlas.name;
+        stavHlasu.textContent = "Mluvím. Použitý hlas: " + hlas.name;
       } else {
-        stav.textContent = "Mluvím, ale český hlas jsem nenašla. Zkontroluj v nastavení Androidu Převod textu na řeč a doinstaluj češtinu.";
+        stavHlasu.textContent = "Mluvím, ale český hlas jsem nenašla. Zkontroluj v nastavení Androidu Převod textu na řeč a doinstaluj češtinu.";
       }
 
       window.speechSynthesis.cancel();
       window.speechSynthesis.speak(veta);
     }
 
-    document.getElementById("tlacitko").addEventListener("click", function () {
+    id("tlacitko").addEventListener("click", function () {
       rekni("Pozor, zbývá přibližně šedesát kilometrů.");
     });
 
@@ -206,10 +417,20 @@
       window.speechSynthesis.onvoiceschanged = function () {};
     }
 
-    // ---------- Start aplikace ----------
-    nactiVyber();
+    // =====================================================
+    // Start aplikace: obnovení uloženého stavu
+    // =====================================================
+    vybrana = nacti("vybranaMotorka");
+
+    var ulozeny = nacti("stavNadrze");
+    if (vybrana && ulozeny && ulozeny.klic === klicMotorky(vybrana)) {
+      stav = ulozeny.stav;
+      id("tUjeto").value = stav ? String(stav.ujetoKm).replace(".", ",") : "";
+    }
+
     vykresliSeznam();
     zobrazKartu();
+    zobrazTankovani();
   </script>
 </body>
 </html>
